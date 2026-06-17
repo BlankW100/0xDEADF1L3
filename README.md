@@ -1,14 +1,19 @@
 # 0xDEADF1L3 — Corrupted File Generator
-Generate dummy/corrupted files of various formats for testing, security challenges, or educational purposes.
+
+Terminal-based tool that generates structurally convincing corrupted files for CTF challenges, bug testing, and social engineering awareness training.
+
+Zero external dependencies — pure Python stdlib.
 
 ## Features
 
-- **Multiple file formats**: PDF, Markdown, TXT, PPTX, DOCX, XLSX, PNG, MP3, MP4
-- **Customizable size**: Specify size in format-specific units (pages, lines, slides, rows, resolution, duration)
-- **Optional metadata**: Add title, author, and description to generated files
-- **Random payload**: Files contain proper format headers followed by random data
-- **Progress tracking**: Visual progress bar during file generation
-- **Windows UTF-8 support**: ANSI colors and UTF-8 output on Windows terminals
+- **9 file formats**: PDF, Markdown, TXT, PPTX, DOCX, XLSX, PNG, MP3, MP4
+- **Format-specific size inputs**: pages, slides, rows, resolution, duration — not raw MB
+- **Structurally valid skeletons**: files pass basic web-based format validators
+- **Embedded metadata**: title, author, description, date written into format-native fields
+- **File timestamp spoofing**: OS modified-date matches the metadata date via `os.utime()`
+- **Generate-again loop**: batch multiple files without restarting
+- **Progress bar**: live progress during generation
+- **Windows UTF-8 / ANSI support**: works in Windows Terminal and CMD
 
 ## Usage
 
@@ -16,35 +21,72 @@ Generate dummy/corrupted files of various formats for testing, security challeng
 python 0xDEADF1L3.py
 ```
 
-The program will interactively prompt you for:
-1. **Filename** (without extension)
-2. **File type** (1-9 for available formats)
-3. **Size** (in format-specific units)
-4. **Metadata** (optional: title, author, description)
+Interactive prompts walk through filename → format → size → metadata → generate.
+After each file, choose to generate another or exit.
 
-## Supported File Types
+## Format internals
 
-| Format | Size Unit | Default |
-|--------|-----------|---------|
-| PDF    | Pages     | 5       |
-| Markdown | Lines   | 100     |
-| TXT    | Lines     | 200     |
-| PPTX   | Slides    | 10      |
-| DOCX   | Pages     | 5       |
-| XLSX   | Rows      | 500     |
-| PNG    | Resolution| 1920x1080 |
-| MP3    | Minutes   | 3       |
-| MP4    | Minutes   | 5       |
+| Format | What's valid inside |
+|--------|---------------------|
+| PDF    | xref table, Catalog/Pages/Page/Font objects, Info dictionary, `%%EOF` |
+| DOCX   | Real ZIP: `[Content_Types].xml`, `_rels/.rels`, `word/document.xml`, `docProps/core.xml`, `docProps/app.xml` with word/page/line counts |
+| PPTX   | Real ZIP: per-slide XML files, `ppt/presentation.xml` with slide IDs, app properties with slide count |
+| XLSX   | Real ZIP: `xl/workbook.xml`, `xl/worksheets/sheet1.xml` with row dimension, app properties |
+| PNG    | Valid `IHDR` chunk with correct CRC32 for specified dimensions, `IEND` at EOF |
+| MP3    | ID3v2.3 header + MPEG1 Layer3 frame sync bytes (`0xFF 0xFB`) at 128 kbps |
+| MP4    | Valid `ftyp` box + sized `mdat` box header |
+| TXT/MD | UTF-8 BOM / YAML front-matter with metadata |
 
-## Example
+## Size inputs
+
+| Format | Prompt           | Default   |
+|--------|------------------|-----------|
+| PDF    | Number of pages  | 5         |
+| MD     | Number of lines  | 100       |
+| TXT    | Number of lines  | 200       |
+| PPTX   | Number of slides | 10        |
+| DOCX   | Number of pages  | 5         |
+| XLSX   | Number of rows   | 500       |
+| PNG    | Resolution (WxH) | 1920x1080 |
+| MP3    | Duration (min)   | 3         |
+| MP4    | Duration (min)   | 5         |
+
+## Date workflow
 
 ```
-> Filename (without extension): test
-> Choose file type [1]: 1
-> Number of pages [5]: 10
-> Title: My PDF
-> Author: Developer
-> Description: Test file
+> Date (optional, e.g. 2026-06-17):          ← type a date, or leave empty
+  Date is empty. Choose an option:
+  [1]  Use today's date (2026-06-17)
+  [2]  No date
+> Select option [2]:
 ```
 
-This creates `test.pdf` with 10 pages of random data.
+When a date is set it is written into the format's native metadata field **and** applied to the file's OS modified-time (`os.utime`).
+
+## Example session
+
+```
+> Filename (without extension): report_q2
+> Choose file type [1]: 4          ← PPTX
+> Number of slides [10]: 15
+> Date (optional): 2026-05-30
+> Title: Q2 Results
+> Author: J. Smith
+> Description: Internal review deck
+  ────────────────────────────────────────────────
+  File generated successfully!
+
+  Path        C:\...\report_q2.pptx
+  Type        .pptx
+  Slides      15 slides
+  Size        3,932,160 bytes  (3.750 MB)
+  Date        2026-05-30
+  Title       Q2 Results
+  Author      J. Smith
+
+> Generate another file? [y/N]: n
+```
+
+## Disclaimer
+
+For CTF challenges, bug testing, and security awareness training only.
