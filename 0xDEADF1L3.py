@@ -3,6 +3,7 @@
 
 import os
 import sys
+from datetime import datetime
 
 # Enable ANSI colours and UTF-8 output on Windows
 if sys.platform == "win32":
@@ -69,19 +70,21 @@ def _png_bytes(res: str) -> int:
 
 # ── Metadata injection ────────────────────────────────────────────────────────
 
-def build_meta(ext: str, title: str, author: str, desc: str) -> bytes:
-    if not (title or author or desc):
+def build_meta(ext: str, title: str, author: str, desc: str, date: str = "") -> bytes:
+    if not (title or author or desc or date):
         return b""
     if ext == "pdf":
         lines = ["% --- Metadata ---"]
         if title:  lines.append(f"% Title: {title}")
         if author: lines.append(f"% Author: {author}")
+        if date:   lines.append(f"% Date: {date}")
         if desc:   lines.append(f"% Description: {desc}")
         return ("\n".join(lines) + "\n").encode("utf-8")
     if ext == "md":
         front = ["---"]
         if title:  front.append(f"title: \"{title}\"")
         if author: front.append(f"author: \"{author}\"")
+        if date:   front.append(f"date: \"{date}\"")
         if desc:   front.append(f"description: \"{desc}\"")
         front.append("---\n")
         return "\n".join(front).encode("utf-8")
@@ -89,6 +92,7 @@ def build_meta(ext: str, title: str, author: str, desc: str) -> bytes:
     parts = []
     if title:  parts.append(f"Title={title}")
     if author: parts.append(f"Author={author}")
+    if date:   parts.append(f"Date={date}")
     if desc:   parts.append(f"Desc={desc}")
     return ("; ".join(parts) + "\x00").encode("utf-8")
 
@@ -125,6 +129,19 @@ def ask(prompt: str, default: str = "") -> str:
     except (EOFError, KeyboardInterrupt):
         print(f"\n{R}Aborted.{X}")
         sys.exit(0)
+
+
+def ask_date() -> str:
+    date_input = ask("Date (optional, e.g. 2026-06-17)")
+    if date_input:
+        return date_input
+    print(f"  {GR}Date is empty. Choose an option:{X}")
+    print(f"  {GR}[{Y}1{GR}]{X}  Use today's date ({datetime.now().strftime('%Y-%m-%d')})")
+    print(f"  {GR}[{Y}2{GR}]{X}  No date")
+    choice = ask("Select option", "2")
+    if choice == "1":
+        return datetime.now().strftime("%Y-%m-%d")
+    return ""
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -172,12 +189,13 @@ def main():
     # Step 4 – metadata (optional)
     print()
     print(f"  {GR}Metadata (optional — press Enter to skip each){X}")
+    date   = ask_date()
     title  = ask("Title")
     author = ask("Author")
     desc   = ask("Description")
 
     # Build and write
-    meta   = build_meta(ext, title, author, desc)
+    meta   = build_meta(ext, title, author, desc, date)
     target = max(target_bytes, len(header) + len(meta) + 1)
     out    = f"{name}.{ext}"
 
@@ -193,6 +211,7 @@ def main():
     print(f"  {GR}Type       {X}  .{ext}")
     print(f"  {GR}{spec_unit.capitalize():<10}{X}  {size_raw} {spec_unit}")
     print(f"  {GR}Size       {X}  {actual:,} bytes  ({actual / 1_048_576:.3f} MB)")
+    if date:   print(f"  {GR}Date       {X}  {date}")
     if title:  print(f"  {GR}Title      {X}  {title}")
     if author: print(f"  {GR}Author     {X}  {author}")
     print()
