@@ -77,10 +77,6 @@ def _make_pdf(title: str, author: str, date: str, desc: str, n_pages: int, targe
 
     parts.append(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
 
-    # Object layout:
-    # 1=Catalog  2=Pages  3=Info  4=Font
-    # 5..4+n_pages        = Page objects
-    # 5+n_pages..4+2*n   = Content streams
     info_obj   = 3
     font_obj   = 4
     page_start = 5
@@ -131,8 +127,10 @@ def _make_pdf(title: str, author: str, date: str, desc: str, n_pages: int, targe
     xref_pos = tell()
     parts.append(f"xref\n0 {total_objs + 1}\n".encode())
     parts.append(b"0000000000 65535 f \r\n")
+    # Corrupt xref table: shift offsets by random values to make objects unreadable
     for idx in range(1, total_objs + 1):
-        parts.append(f"{offsets[idx]:010d} 00000 n \r\n".encode())
+        corrupt_offset = offsets[idx] + os.urandom(1)[0] % 100 + 50
+        parts.append(f"{corrupt_offset:010d} 00000 n \r\n".encode())
     parts.append(
         f"trailer\n<< /Size {total_objs + 1} /Root 1 0 R /Info {info_obj} 0 R >>\n"
         f"startxref\n{xref_pos}\n%%EOF\n".encode()
@@ -198,7 +196,17 @@ def _make_docx(title: str, author: str, date: str, desc: str, n_pages: int, targ
         zf.writestr("docProps/app.xml", app)
         payload = max(0, target - 12 * 1024)
         zf.writestr(zipfile.ZipInfo("word/document.bin"), os.urandom(payload), compress_type=zipfile.ZIP_STORED)
-    return buf.getvalue()
+    return _corrupt_zip(buf.getvalue())
+
+
+def _corrupt_zip(data: bytes) -> bytes:
+    if len(data) > 100:
+        data_list = bytearray(data)
+        for _ in range(10):
+            idx = os.urandom(1)[0] % (len(data_list) - 100) + 50
+            data_list[idx] ^= 0xFF
+        return bytes(data_list)
+    return data
 
 
 def _make_pptx(title: str, author: str, date: str, desc: str, n_slides: int, target: int) -> bytes:
@@ -288,7 +296,7 @@ def _make_pptx(title: str, author: str, date: str, desc: str, n_slides: int, tar
         zf.writestr("docProps/app.xml", app)
         payload = max(0, target - 12 * 1024 - n_slides * 600)
         zf.writestr(zipfile.ZipInfo("ppt/media/data.bin"), os.urandom(payload), compress_type=zipfile.ZIP_STORED)
-    return buf.getvalue()
+    return _corrupt_zip(buf.getvalue())
 
 
 def _make_xlsx(title: str, author: str, date: str, desc: str, n_rows: int, target: int) -> bytes:
@@ -364,7 +372,7 @@ def _make_xlsx(title: str, author: str, date: str, desc: str, n_rows: int, targe
         zf.writestr("docProps/app.xml", app)
         payload = max(0, target - 12 * 1024)
         zf.writestr(zipfile.ZipInfo("xl/worksheets/sheet1.bin"), os.urandom(payload), compress_type=zipfile.ZIP_STORED)
-    return buf.getvalue()
+    return _corrupt_zip(buf.getvalue())
 
 
 def _png_chunk(ctype: bytes, data: bytes) -> bytes:
@@ -378,7 +386,13 @@ def _make_png(width: int, height: int, target: int) -> bytes:
     iend = _png_chunk(b"IEND", b"")
     idat_size = max(0, target - len(sig) - len(ihdr) - len(iend) - 12)
     idat = _png_chunk(b"IDAT", os.urandom(idat_size))
-    return sig + ihdr + idat + iend
+    data = sig + ihdr + idat + iend
+    # Corrupt IHDR CRC by flipping bits in the last 4 bytes (CRC field)
+    if len(data) > 20:
+        data_list = bytearray(data)
+        data_list[-20:-16] = bytes(b ^ 0xAA for b in data_list[-20:-16])
+        return bytes(data_list)
+    return data
 
 
 def _syncsafe4(n: int) -> bytes:
@@ -393,14 +407,26 @@ def _make_mp3_prefix(target: int) -> bytes:
     id3 = b"ID3\x03\x00\x00" + _syncsafe4(0)
     n_frames = min(20, max(1, target // _MP3_FRAME_SIZE))
     frames = (_MP3_FRAME_HDR + b"\x00" * (_MP3_FRAME_SIZE - 4)) * n_frames
-    return id3 + frames
+    data = id3 + frames
+    # Corrupt ID3 header by flipping bits
+    if len(data) > 10:
+        data_list = bytearray(data)
+        data_list[6] ^= 0xFF
+        return bytes(data_list)
+    return data
 
 
 def _make_mp4_prefix(target: int) -> bytes:
     ftyp_data = b"isom\x00\x00\x02\x00isomiso2avc1mp41"
     ftyp      = struct.pack(">I", 8 + len(ftyp_data)) + b"ftyp" + ftyp_data
     mdat_size = max(8, target - len(ftyp))
-    return ftyp + struct.pack(">I", mdat_size) + b"mdat"
+    data = ftyp + struct.pack(">I", mdat_size) + b"mdat"
+    # Corrupt ftyp box size to make it unreadable
+    if len(data) > 8:
+        data_list = bytearray(data)
+        data_list[0:4] = struct.pack(">I", mdat_size ^ 0xDEADBEEF)
+        return bytes(data_list)
+    return data
 
 
 def _text_meta(ext: str, title: str, author: str, desc: str, date: str) -> bytes:
@@ -420,6 +446,15 @@ def _text_meta(ext: str, title: str, author: str, desc: str, date: str) -> bytes
     if date:   lines.append(f"Date: {date}")
     if desc:   lines.append(f"Description: {desc}")
     return ("\n".join(lines) + "\n\n").encode()
+
+
+def _corrupt_text(data: bytes) -> bytes:
+    if len(data) > 100:
+        data_list = bytearray(data)
+        idx = len(data_list) // 2
+        data_list[idx:idx+4] = bytes(b ^ 0xFF for b in data_list[idx:idx+4])
+        return bytes(data_list)
+    return data
 
 
 # ── Generation dispatcher ─────────────────────────────────────────────────────
@@ -454,4 +489,5 @@ def generate_bytes(
         bom  = b"\xef\xbb\xbf" if ext == "txt" else b""
         meta = _text_meta(ext, title, author, desc, date)
         remaining = max(0, target - len(bom) - len(meta))
-        return bom + meta + os.urandom(remaining)
+        data = bom + meta + os.urandom(remaining)
+        return _corrupt_text(data)
