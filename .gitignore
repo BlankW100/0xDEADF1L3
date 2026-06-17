@@ -43,6 +43,9 @@ ENV/
 *.mp3
 *.mp4
 
+# But keep repo documentation
+!README.md
+
 # OS
 .DS_Store
 Thumbs.db
